@@ -1,2 +1,2 @@
 # fast_fluid_impl
-Fluid implementation for a HSE homework assignment
+Пожалуйста, дайте мне время до конца 22ого числа
