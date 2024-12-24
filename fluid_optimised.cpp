@@ -308,10 +308,10 @@ bool propagate_move(int x, int y, bool is_first) {
 int dirs[N][M]{};
 
 int main() {
-    cout << "Choose number of iterations: ";
+    cout << "Number of iterations: " << endl;
     cin >> T;
 
-    cout << "Choose number of threads: ";
+    cout << "Number of threads: " << endl;
     int numThreads;
     cin >> numThreads;
 
@@ -432,7 +432,7 @@ int main() {
         if (prop) {
             cout << "Tick " << i << ":\n";
             for (size_t x = 0; x < N; ++x) {
-                printf("%.*s\n", M, field[x]);
+                cout << field[x] << "\n";
             }
         }
     }

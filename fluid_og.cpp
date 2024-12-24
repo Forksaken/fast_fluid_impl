@@ -4,7 +4,7 @@ using namespace std;
 
 constexpr size_t N = 36, M = 84;
 // constexpr size_t N = 14, M = 5;
-constexpr size_t T = 1'000'000;
+size_t T;
 constexpr std::array<pair<int, int>, 4> deltas{{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}};
 
 // char field[N][M + 1] = {
@@ -304,6 +304,11 @@ bool propagate_move(int x, int y, bool is_first) {
 int dirs[N][M]{};
 
 int main() {
+    cout << "Number of iterations: " << endl;
+    cin >> T;
+
+    std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+
     rho[' '] = 0.01;
     rho['.'] = 1000;
     Fixed g = 0.1;
@@ -423,4 +428,7 @@ int main() {
             }
         }
     }
+    std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> time_span = std::chrono::duration_cast<std::chrono::duration<double>>(end - start);
+    cout << "Execution time: " << time_span.count() << " seconds." << endl;
 }
