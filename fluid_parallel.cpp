@@ -17,7 +17,6 @@
 #include "ThreadPool.hpp"
 
 using namespace std;
-using namespace chrono;
 
 constexpr size_t N = 36, M = 84;
 // constexpr size_t N = 14, M = 5;
@@ -159,8 +158,8 @@ struct VectorField {
     }
 
     inline Fixed &get(int x, int y, int dx, int dy) {
-       if (dx == 0) { return v[x][y][dy > 0 ? 3 : 2]; }
-       else { return v[x][y][dx > 0 ? 1 : 0]; }
+        if (dx == 0) { return v[x][y][dy > 0 ? 3 : 2]; }
+        else { return v[x][y][dx > 0 ? 1 : 0]; }
     }
 };
 

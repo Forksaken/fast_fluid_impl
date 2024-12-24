@@ -113,7 +113,7 @@ public:
     void wait_all() {
         std::unique_lock<std::mutex> lock(queueMutex);
         wait_condition.wait(lock, [this]{
-            return tasks.empty() && active_tasks.load() < 15;
+            return tasks.empty() && active_tasks.load() < 30;
         });
     }
 
