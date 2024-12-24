@@ -4,10 +4,9 @@
 #include <cstddef>
 #include <functional>
 #include <future>
-#include <map>
+#include <unordered_map>
 #include <queue>
 #include <thread>
-#include <unordered_map>
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
@@ -15,6 +14,9 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include <memory>
+#include <vector>
+#include <stdexcept>
 
 class ThreadPool {
 private:
@@ -47,45 +49,35 @@ private:
     template <class F, class... Args>
     class PackagedTask : public BasePackagedTask {
     private:
-        using ReturnType = typename std::result_of<F(Args...)>::type;
-        std::function<ReturnType(Args...)> func;
-        std::tuple<std::decay_t<Args>...> args;
+        using ReturnType = typename std::invoke_result<F, Args...>::type;
+        std::function<ReturnType()> func;
         std::packaged_task<ReturnType()> task;
     public:
         PackagedTask(uint32_t nid, F &&f, Args &&...nargs)
             : BasePackagedTask(nid),
-              func(std::forward<F>(f)),
-              args(std::make_tuple(std::forward<Args>(nargs)...)),
-              task([this] { return std::apply(func, args); }) {}
+              func(std::bind(std::forward<F>(f), std::forward<Args>(nargs)...)),
+              task(func) {}
+
         std::unique_ptr<BaseFuture> execute() override {
+            auto fut = task.get_future();
             task();
-            return std::make_unique<Future<ReturnType>>(id, task.get_future());
+            return std::make_unique<Future<ReturnType>>(id, std::move(fut));
         }
     };
 
     std::vector<std::jthread> workers;
-    std::unordered_map<int, std::unique_ptr<BaseFuture>> futures;
-    std::atomic_uint32_t nextId;
     std::queue<std::unique_ptr<BasePackagedTask>> tasks;
-
+    std::unordered_map<int, std::unique_ptr<BaseFuture>> futures;
     std::mutex queueMutex;
     std::condition_variable condition;
     std::condition_variable futureCondition;
+    std::atomic_uint32_t nextId{0};
+    std::atomic<bool> stop_flag{false};
 
 public:
     ThreadPool() = default;
 
-    void init(int numThreads) {
-        nextId = 0;
-        for (int i = 0; i < numThreads; i++) {
-            workers.emplace_back([this](std::stop_token stoken) {
-                this->workerThread(stoken);
-            });
-        }
-    }
-
     ThreadPool(size_t numThreads) {
-        nextId = 0;
         for (size_t i = 0; i < numThreads; i++) {
             workers.emplace_back([this](std::stop_token stoken) {
                 this->workerThread(stoken);
@@ -99,9 +91,10 @@ public:
 
     template <class F, class... Args>
     int enqueue(F &&f, Args &&...args) {
-        uint32_t id = nextId++;
+        uint32_t id = nextId.fetch_add(1, std::memory_order_relaxed);
         auto task = std::make_unique<PackagedTask<F, Args...>>(
-            id, std::forward<F>(f), std::forward<Args>(args)...); {
+            id, std::forward<F>(f), std::forward<Args>(args)...);
+        {
             std::lock_guard<std::mutex> lock(queueMutex);
             tasks.push(std::move(task));
         }
@@ -114,7 +107,9 @@ public:
         futureCondition.wait(lock, [this, id] {
             return futures.find(id) != futures.end();
         });
-        futures[id]->wait();
+        if (futures.find(id) != futures.end()) {
+            futures[id]->wait();
+        }
     }
 
     template <typename T>
@@ -123,11 +118,17 @@ public:
         futureCondition.wait(lock, [this, id] {
             return futures.find(id) != futures.end();
         });
-        auto future = dynamic_cast<Future<T> *>(futures[id].get());
-        if (!future) {
+        auto it = futures.find(id);
+        if (it == futures.end()) {
+            throw std::runtime_error("Task id not found");
+        }
+        auto futurePtr = dynamic_cast<Future<T>*>(it->second.get());
+        if (!futurePtr) {
             throw std::runtime_error("Invalid type for future");
         }
-        return future->get();
+        T result = futurePtr->get();
+        futures.erase(it);
+        return result;
     }
 
     void erase(int id) {
@@ -136,33 +137,43 @@ public:
     }
 
     void stopAll() {
+        {
+            std::lock_guard<std::mutex> lock(queueMutex);
+            stop_flag.store(true);
+        }
         condition.notify_all();
-        for (std::jthread &worker : workers) {
+        for (auto& worker : workers) {
             if (worker.joinable()) worker.request_stop();
         }
     }
 
 private:
     void workerThread(std::stop_token stoken) {
-        while (true) {
-            std::unique_ptr<BasePackagedTask> task; {
+        while (!stoken.stop_requested()) {
+            std::unique_ptr<BasePackagedTask> task;
+            {
                 std::unique_lock<std::mutex> lock(queueMutex);
                 condition.wait(lock, [this, &stoken] {
                     return stoken.stop_requested() || !tasks.empty();
                 });
                 if (stoken.stop_requested() && tasks.empty())
-                    return;
+                    break;
                 if (!tasks.empty()) {
                     task = std::move(tasks.front());
                     tasks.pop();
                 }
             }
             if (task) {
-                auto future = task->execute(); {
-                    std::lock_guard<std::mutex> lock(queueMutex);
-                    futures[future->id] = std::move(future);
+                try {
+                    auto future = task->execute();
+                    {
+                        std::lock_guard<std::mutex> lock(queueMutex);
+                        futures[future->id] = std::move(future);
+                    }
+                    futureCondition.notify_all();
+                } catch (...) {
+                    // parsing exceptions, can be ignored
                 }
-                futureCondition.notify_all();
             }
         }
     }
