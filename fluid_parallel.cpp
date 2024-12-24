@@ -1,11 +1,23 @@
-#include <bits/stdc++.h>
+#include <array>
+#include <cassert>
+#include <cstdint>
 #include <iostream>
+#include <limits>
+#include <random>
+#include <tuple>
+#include <algorithm>
+#include <sstream>
+#include <optional>
+#include <fstream>
+#include <thread>
+#include <future>
 #include <vector>
 #include <chrono>
-#include <omp.h>
+#include <thread>
 #include "ThreadPool.hpp"
 
 using namespace std;
+using namespace chrono;
 
 constexpr size_t N = 36, M = 84;
 // constexpr size_t N = 14, M = 5;
@@ -192,6 +204,7 @@ tuple<Fixed, bool, pair<int, int>> propagate_flow(int x, int y, Fixed lim) {
     return {ret, 0, {0, 0}};
 }
 
+
 inline Fixed random01() {
     return Fixed::from_raw((rnd() & ((1 << 16) - 1)));
 }
@@ -306,8 +319,44 @@ bool propagate_move(int x, int y, bool is_first) {
 }
 
 int dirs[N][M]{};
+Fixed g = 0.1;
+
+std::mutex total_delta_p_mtx;
+std::mutex p_mtx;
+
+void define_p(size_t x, size_t y, Fixed& total_delta_p) {
+    if (field[x][y] == '#')
+        return;
+    for (auto [dx, dy] : deltas) {
+        auto old_v = velocity.get(x, y, dx, dy);
+        auto new_v = velocity_flow.get(x, y, dx, dy);
+        if (old_v > 0) {
+            assert(new_v <= old_v);
+            velocity.get(x, y, dx, dy) = new_v;
+            auto force = (old_v - new_v) * rho[(int) field[x][y]];
+            if (field[x][y] == '.')
+                force *= 0.8;
+
+            if (field[x + dx][y + dy] == '#') {
+                p[x][y] += force / dirs[x][y];
+                std::unique_lock<std::mutex> lock(total_delta_p_mtx);
+                total_delta_p += force / dirs[x][y];
+                lock.unlock();
+
+            } else {
+                std::unique_lock<std::mutex> p_lock(p_mtx);
+                p[x + dx][y + dy] += force / dirs[x + dx][y + dy];
+                p_lock.unlock();
+                std::unique_lock<std::mutex> lock(total_delta_p_mtx);
+                total_delta_p += force / dirs[x + dx][y + dy];
+                lock.unlock();
+            }
+        }
+    }
+}
 
 int main() {
+
     cout << "Number of iterations: " << endl;
     cin >> T;
 
@@ -315,11 +364,14 @@ int main() {
     int numThreads;
     cin >> numThreads;
 
+    ThreadPool pool(numThreads);
+
     std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+
 
     rho[' '] = 0.01;
     rho['.'] = 1000;
-    Fixed g = 0.1;
+    g = 0.1;
 
     for (size_t x = 0; x < N; ++x) {
         for (size_t y = 0; y < M; ++y) {
@@ -391,28 +443,10 @@ int main() {
         // Recalculate p with kinetic energy
         for (size_t x = 0; x < N; ++x) {
             for (size_t y = 0; y < M; ++y) {
-                if (field[x][y] == '#')
-                    continue;
-                for (auto [dx, dy] : deltas) {
-                    auto old_v = velocity.get(x, y, dx, dy);
-                    auto new_v = velocity_flow.get(x, y, dx, dy);
-                    if (old_v > 0) {
-                        assert(new_v <= old_v);
-                        velocity.get(x, y, dx, dy) = new_v;
-                        auto force = (old_v - new_v) * rho[(int) field[x][y]];
-                        if (field[x][y] == '.')
-                            force *= 0.8;
-                        if (field[x + dx][y + dy] == '#') {
-                            p[x][y] += force / dirs[x][y];
-                            total_delta_p += force / dirs[x][y];
-                        } else {
-                            p[x + dx][y + dy] += force / dirs[x + dx][y + dy];
-                            total_delta_p += force / dirs[x + dx][y + dy];
-                        }
-                    }
-                }
+                pool.enqueue(define_p, x, y, std::ref(total_delta_p));
             }
         }
+        pool.wait_all();
 
         UT += 2;
         prop = false;
