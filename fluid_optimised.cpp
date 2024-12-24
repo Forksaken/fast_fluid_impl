@@ -311,10 +311,6 @@ int main() {
     cout << "Number of iterations: " << endl;
     cin >> T;
 
-    cout << "Number of threads: " << endl;
-    int numThreads;
-    cin >> numThreads;
-
     std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
 
     rho[' '] = 0.01;
